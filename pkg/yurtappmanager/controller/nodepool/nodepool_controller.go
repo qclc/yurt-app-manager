@@ -51,6 +51,7 @@ const controllerName = "nodepool-controller"
 var concurrentReconciles = 3
 
 // NodePoolReconciler reconciles a NodePool object
+// 一个controller中只有一个Reconciler
 type NodePoolReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
@@ -83,6 +84,7 @@ func Add(mgr manager.Manager, ctx context.Context) error {
 // newReconciler returns a new reconcile.Reconciler
 func newReconciler(mgr manager.Manager, createDefaultPool bool) reconcile.Reconciler {
 	return &NodePoolReconciler{
+		//Reconciler不可避免地需要对某些资源类型进行crud，就是通过该 Clients 实现的
 		Client:            mgr.GetClient(),
 		Scheme:            mgr.GetScheme(),
 		recorder:          mgr.GetEventRecorderFor(controllerName),
@@ -107,6 +109,7 @@ func add(mgr manager.Manager, r reconcile.Reconciler) error {
 	}
 
 	// Watch for changes to NodePool
+	// watch NodePool 资源的变化
 	err = c.Watch(&source.Kind{
 		Type: &appsv1alpha1.NodePool{}},
 		&handler.EnqueueRequestForObject{})
@@ -115,6 +118,7 @@ func add(mgr manager.Manager, r reconcile.Reconciler) error {
 	}
 
 	// Watch for changes to Node
+	// watch Node 实例的变化
 	err = c.Watch(&source.Kind{
 		Type: &corev1.Node{}},
 		&EnqueueNodePoolForNode{})
@@ -141,6 +145,7 @@ func createNodePool(c client.Client, name string,
 				Type: poolType,
 			},
 		}
+		//将nodepool这个对象保存到k8s集群中
 		err := c.Create(context.TODO(), &np)
 		if err == nil {
 			klog.V(4).Infof("the default nodepool(%s) is created", name)
@@ -173,10 +178,12 @@ func (r *NodePoolReconciler) Reconcile(_ context.Context, req ctrl.Request) (ctr
 	ctx := context.Background()
 	var nodePool appsv1alpha1.NodePool
 	// try to reconcile the NodePool object
+	// 获取nodepool资源对象
 	if err := r.Get(ctx, req.NamespacedName, &nodePool); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
+	//根据标签获取NodeList, 获取标签"apps.openyurt.io/desired-nodepool"=nodePool.GetName()的Node, 表示当前有哪些node想要加入该nodepool
 	var desiredNodeList corev1.NodeList
 	if err := r.List(ctx, &desiredNodeList, client.MatchingLabels(map[string]string{
 		appsv1alpha1.LabelDesiredNodePool: nodePool.GetName(),
@@ -184,6 +191,7 @@ func (r *NodePoolReconciler) Reconcile(_ context.Context, req ctrl.Request) (ctr
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
+	//根据标签获取NodeList, 获取标签"apps.openyurt.io/nodepool"=nodePool.GetName()的Node, 表示该nodepool当前有哪些node
 	var currentNodeList corev1.NodeList
 	if err := r.List(ctx, &currentNodeList, client.MatchingLabels(map[string]string{
 		appsv1alpha1.LabelCurrentNodePool: nodePool.GetName(),
@@ -194,6 +202,7 @@ func (r *NodePoolReconciler) Reconcile(_ context.Context, req ctrl.Request) (ctr
 	// 1. handle the event of removing node out of the pool
 	// nodes in currentNodeList but not in the desiredNodeList, will be
 	// removed from the pool
+	// 处理移除节点事件, 将在currentNodeList中但不在desiredNodeList中的节点从pool中删掉
 	var removedNodes []corev1.Node
 	for _, mNode := range currentNodeList.Items {
 		var found bool
@@ -209,9 +218,11 @@ func (r *NodePoolReconciler) Reconcile(_ context.Context, req ctrl.Request) (ctr
 	}
 
 	for _, rNode := range removedNodes {
+		// 删除与节点池信息相关的属性, 包括label/annotation/taint
 		if err := removePoolRelatedAttrs(&rNode); err != nil {
 			return ctrl.Result{}, err
 		}
+		// 更新删除信息后的node对象至apiserver上
 		if err := r.Update(ctx, &rNode); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -225,14 +236,16 @@ func (r *NodePoolReconciler) Reconcile(_ context.Context, req ctrl.Request) (ctr
 
 	// 2. handle the event of adding node to the pool and the event of
 	// updating node pool attributes
+	// 处理添加节点进池子的事件
 	for _, node := range desiredNodeList.Items {
 		nodes = append(nodes, node.GetName())
+		// 判断desiredNodeList中的节点是否ready
 		if isNodeReady(node) {
 			readyNode += 1
 		} else {
 			notReadyNode += 1
 		}
-
+		// 更新desiredNodeList列表中的节点有关节点池的相关属性
 		attrUpdated, err := conciliatePoolRelatedAttrs(&node,
 			NodePoolRelatedAttributes{
 				Labels:      nodePool.Spec.Labels,
@@ -242,6 +255,7 @@ func (r *NodePoolReconciler) Reconcile(_ context.Context, req ctrl.Request) (ctr
 		if err != nil {
 			return ctrl.Result{}, err
 		}
+		// 判断"apps.openyurt.io/nodepool"这个标签的值是否是当前需要加入的NodePool, 不是的话进行更新
 		var ownerLabelUpdated bool
 		if node.Labels[appsv1alpha1.LabelCurrentNodePool] != nodePool.GetName() {
 			ownerLabelUpdated = true
@@ -250,7 +264,7 @@ func (r *NodePoolReconciler) Reconcile(_ context.Context, req ctrl.Request) (ctr
 			}
 			node.Labels[appsv1alpha1.LabelCurrentNodePool] = nodePool.GetName()
 		}
-
+		// 只要节点的相关属性或者NodePool归属标签有一个进行了更新, 则更新该node资源对象至apiserver
 		if attrUpdated || ownerLabelUpdated {
 			if err := r.Update(ctx, &node); err != nil {
 				klog.Errorf("Update Node %s error %v", node.Name, err)
@@ -260,36 +274,38 @@ func (r *NodePoolReconciler) Reconcile(_ context.Context, req ctrl.Request) (ctr
 	}
 
 	// 3. always update the node pool status if necessary
+	// 最后永远更新nodepool的状态, 主要是ready和notready的值, 以及nodepool中有哪些node(string)
 	return conciliateNodePoolStatus(r.Client, readyNode, notReadyNode, nodes, &nodePool)
 }
 
 // removePoolRelatedAttrs removes attributes(label/annotation/taint) that
 // relate to nodepool
+// 删除与节点池信息相关的属性, 包括label/annotation/taint
 func removePoolRelatedAttrs(node *corev1.Node) error {
 	var npra NodePoolRelatedAttributes
 
 	if _, exist := node.Annotations[appsv1alpha1.AnnotationPrevAttrs]; !exist {
 		return nil
 	}
-
+	// 将node的Annotations中的以nodepool.openyurt.io/previous-attributes为开头的注释解析为NodePoolRelatedAttributes格式
 	if err := json.Unmarshal(
 		[]byte(node.Annotations[appsv1alpha1.AnnotationPrevAttrs]),
 		&npra); err != nil {
 		return err
 	}
-
+	//删除node中的label
 	for lk, lv := range npra.Labels {
 		if node.Labels[lk] == lv {
 			delete(node.Labels, lk)
 		}
 	}
-
+	//删除node中的annotation信息
 	for ak, av := range npra.Labels {
 		if node.Annotations[ak] == av {
 			delete(node.Annotations, ak)
 		}
 	}
-
+	//删除node的相关污点
 	for _, t := range npra.Taints {
 		if i, exist := containTaint(t, node.Spec.Taints); exist {
 			node.Spec.Taints = append(
@@ -297,6 +313,7 @@ func removePoolRelatedAttrs(node *corev1.Node) error {
 				node.Spec.Taints[i+1:]...)
 		}
 	}
+	//删除空的与nodepool相关的annotation和labels
 	delete(node.Annotations, appsv1alpha1.AnnotationPrevAttrs)
 	delete(node.Labels, appsv1alpha1.LabelCurrentNodePool)
 
@@ -305,10 +322,12 @@ func removePoolRelatedAttrs(node *corev1.Node) error {
 
 // conciliatePoolRelatedAttrs will update the node's attributes that related to
 // the nodepool
+// 更新节点上有关节点池的相关属性
 func conciliatePoolRelatedAttrs(node *corev1.Node,
 	npra NodePoolRelatedAttributes) (bool, error) {
 	var attrUpdated bool
 	preAttrs, exist := node.Annotations[appsv1alpha1.AnnotationPrevAttrs]
+	// 判断是否存在旧的相关属性, 不存在直接加上即可
 	if !exist {
 		node.Labels = mergeMap(node.Labels, npra.Labels)
 		node.Annotations = mergeMap(node.Annotations, npra.Annotations)
@@ -328,6 +347,7 @@ func conciliatePoolRelatedAttrs(node *corev1.Node,
 		attrUpdated = true
 		return attrUpdated, nil
 	}
+	// 若存在旧的, 判断相关属性是否与当前的一致, 不一致则进行更新
 	var preNpra NodePoolRelatedAttributes
 	if err := json.Unmarshal([]byte(preAttrs), &preNpra); err != nil {
 		return attrUpdated, err
@@ -465,6 +485,7 @@ func removeTaint(taint corev1.Taint, taints []corev1.Taint) []corev1.Taint {
 
 // cachePrevPoolAttrs caches the nodepool-related attributes to the
 // node's annotation
+// 将nodepool相关的信息保存到annotation里面
 func cachePrevPoolAttrs(node *corev1.Node,
 	npra NodePoolRelatedAttributes) error {
 	npraJson, err := json.Marshal(npra)

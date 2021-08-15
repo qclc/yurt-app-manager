@@ -94,17 +94,20 @@ func newReconciler(mgr manager.Manager) reconcile.Reconciler {
 // add adds a new Controller to mgr with r as the reconcile.Reconciler
 func add(mgr manager.Manager, r reconcile.Reconciler) error {
 	// Create a new controller
+	// 创建新的controller
 	c, err := controller.New(controllerName, mgr, controller.Options{Reconciler: r, MaxConcurrentReconciles: concurrentReconciles})
 	if err != nil {
 		return err
 	}
 
 	// Watch for changes to UnitedDeployment
+	// watch UnitedDeployment 资源的变化
 	err = c.Watch(&source.Kind{Type: &unitv1alpha1.UnitedDeployment{}}, &handler.EnqueueRequestForObject{})
 	if err != nil {
 		return err
 	}
 
+	// watch StatefulSet 资源的变化
 	err = c.Watch(&source.Kind{Type: &appsv1.StatefulSet{}}, &handler.EnqueueRequestForOwner{
 		IsController: true,
 		OwnerType:    &unitv1alpha1.UnitedDeployment{},
@@ -112,7 +115,7 @@ func add(mgr manager.Manager, r reconcile.Reconciler) error {
 	if err != nil {
 		return err
 	}
-
+	// watch Deployment 资源的变化
 	err = c.Watch(&source.Kind{Type: &appsv1.Deployment{}}, &handler.EnqueueRequestForOwner{
 		IsController: true,
 		OwnerType:    &unitv1alpha1.UnitedDeployment{},
@@ -131,7 +134,8 @@ type ReconcileUnitedDeployment struct {
 	client.Client
 	scheme *runtime.Scheme
 
-	recorder     record.EventRecorder
+	recorder record.EventRecorder
+	// 根据Template类别(statefulSet 或 Deployment)创建的操作Pool对象的控制器
 	poolControls map[unitv1alpha1.TemplateType]ControlInterface
 }
 
@@ -151,7 +155,9 @@ type ReconcileUnitedDeployment struct {
 func (r *ReconcileUnitedDeployment) Reconcile(_ context.Context, request reconcile.Request) (reconcile.Result, error) {
 	klog.V(4).Infof("Reconcile UnitedDeployment %s/%s", request.Namespace, request.Name)
 	// Fetch the UnitedDeployment instance
+	// 获取UnitedDeployment对象
 	instance := &unitv1alpha1.UnitedDeployment{}
+	// 从kube-apiserver获取ud对象
 	err := r.Get(context.TODO(), request.NamespacedName, instance)
 	if err != nil {
 		if errors.IsNotFound(err) {
@@ -165,13 +171,14 @@ func (r *ReconcileUnitedDeployment) Reconcile(_ context.Context, request reconci
 	}
 	oldStatus := instance.Status.DeepCopy()
 
+	// 返回(当前status中的版本号, 更新后的版本号, 更新后的CollisionCount, 错误)
 	currentRevision, updatedRevision, collisionCount, err := r.constructUnitedDeploymentRevisions(instance)
 	if err != nil {
 		klog.Errorf("Fail to construct controller revision of UnitedDeployment %s/%s: %s", instance.Namespace, instance.Name, err)
 		r.recorder.Event(instance.DeepCopy(), corev1.EventTypeWarning, fmt.Sprintf("Failed%s", eventTypeRevisionProvision), err.Error())
 		return reconcile.Result{}, err
 	}
-
+	// 根据UnitedDeployment实例中的WorkloadTemplate类型(StatefulSet 或 Deployment)返回不同的操作Pool对象的控制器
 	control, poolType, err := r.getPoolControls(instance)
 	if err != nil {
 		r.recorder.Event(instance.DeepCopy(), corev1.EventTypeWarning, fmt.Sprintf("Failed%s", eventTypeTemplateController), err.Error())
@@ -179,7 +186,7 @@ func (r *ReconcileUnitedDeployment) Reconcile(_ context.Context, request reconci
 	}
 
 	klog.V(4).Infof("Get UnitedDeployment %s/%s all pools", request.Namespace, request.Name)
-
+	// 获取该UnitedDeployment实例下所属的所有pool, 并按照pool name进行分类
 	nameToPool, err := r.getNameToPool(instance, control)
 	if err != nil {
 		klog.Errorf("Fail to get Pools of UnitedDeployment %s/%s: %s", instance.Namespace, instance.Name, err)
@@ -188,6 +195,7 @@ func (r *ReconcileUnitedDeployment) Reconcile(_ context.Context, request reconci
 		return reconcile.Result{}, nil
 	}
 
+	// 获取一个ud中每个pool对应的更新配置, 即UnitedDeploymentPatches{}
 	nextPatches := GetNextPatches(instance)
 	klog.V(4).Infof("Get UnitedDeployment %s/%s next Patches %v", instance.Namespace, instance.Name, nextPatches)
 
@@ -195,6 +203,8 @@ func (r *ReconcileUnitedDeployment) Reconcile(_ context.Context, request reconci
 	if updatedRevision != nil {
 		expectedRevision = updatedRevision
 	}
+
+	// 调谐ud *unitv1alpha1.UnitedDeployment实例中的pools, 使得当前的ud.pools符合期望的状态
 	newStatus, err := r.managePools(instance, nameToPool, nextPatches, expectedRevision, poolType)
 	if err != nil {
 		klog.Errorf("Fail to update UnitedDeployment %s/%s: %s", instance.Namespace, instance.Name, err)
@@ -204,7 +214,9 @@ func (r *ReconcileUnitedDeployment) Reconcile(_ context.Context, request reconci
 	return r.updateStatus(instance, newStatus, oldStatus, nameToPool, currentRevision, collisionCount, control)
 }
 
+// 获取该UnitedDeployment实例下所属的所有pool, 并按照pool name进行分类
 func (r *ReconcileUnitedDeployment) getNameToPool(instance *unitv1alpha1.UnitedDeployment, control ControlInterface) (map[string]*Pool, error) {
+	// 获取该UnitedDeployment实例下所属的所有pool
 	pools, err := control.GetAllPools(instance)
 	if err != nil {
 		r.recorder.Event(instance.DeepCopy(), corev1.EventTypeWarning, fmt.Sprintf("Failed%s", eventTypeFindPools), err.Error())
@@ -212,8 +224,9 @@ func (r *ReconcileUnitedDeployment) getNameToPool(instance *unitv1alpha1.UnitedD
 	}
 
 	klog.V(4).Infof("Classify UnitedDeployment %s/%s by pool name", instance.Namespace, instance.Name)
+	// 根据pool Name将所有的pool分类, 返回map[string][]*Pool
 	nameToPools := r.classifyPoolByPoolName(pools)
-
+	// 删除多余的Pool, 一个pool Name下只保留第一个Pool
 	nameToPool, err := r.deleteDupPool(nameToPools, control)
 	if err != nil {
 		r.recorder.Event(instance.DeepCopy(), corev1.EventTypeWarning, fmt.Sprintf("Failed%s", eventTypeDupPoolsDelete), err.Error())
@@ -246,6 +259,7 @@ func (r *ReconcileUnitedDeployment) deleteDupPool(nameToPools map[string][]*Pool
 	return nameToPool, nil
 }
 
+// 根据UnitedDeployment实例中的WorkloadTemplate类型(StatefulSet 或 Deployment)返回不同的操作Pool对象的控制器
 func (r *ReconcileUnitedDeployment) getPoolControls(instance *unitv1alpha1.UnitedDeployment) (ControlInterface,
 	unitv1alpha1.TemplateType, error) {
 	switch {

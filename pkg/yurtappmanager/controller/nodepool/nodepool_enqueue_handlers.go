@@ -30,8 +30,10 @@ import (
 type EnqueueNodePoolForNode struct{}
 
 // Create implements EventHandler
+// 创建对象事件的处理
 func (e *EnqueueNodePoolForNode) Create(evt event.CreateEvent,
 	q workqueue.RateLimitingInterface) {
+	// 提取事件中的node对象
 	node, ok := evt.Object.(*corev1.Node)
 	if !ok {
 		klog.Error("fail to assert runtime Object to v1.Node")
@@ -39,6 +41,7 @@ func (e *EnqueueNodePoolForNode) Create(evt event.CreateEvent,
 	}
 	klog.V(5).Infof("will enqueue nodepool as node(%s) has been created",
 		node.GetName())
+	// 若node的label存在"apps.openyurt.io/desired-nodepool", 则将该事件加入的处理队列中
 	if np, exist := node.Labels[appsv1alpha1.LabelDesiredNodePool]; exist {
 		addNodePoolToWorkQueue(np, q)
 		return
@@ -65,8 +68,9 @@ func (e *EnqueueNodePoolForNode) Update(evt event.UpdateEvent,
 		newNode.GetName())
 	newNp := newNode.Labels[appsv1alpha1.LabelDesiredNodePool]
 	oldNp := oldNode.Labels[appsv1alpha1.LabelCurrentNodePool]
-
+	// 节点池信息改变时, 进行调整
 	if newNp != oldNp {
+		// 如果newNP为空, 表示移除节点池
 		if newNp == "" {
 			// remove node from old pool
 			klog.V(5).Infof("will enqueue old pool(%s) for node(%s)",
@@ -74,7 +78,7 @@ func (e *EnqueueNodePoolForNode) Update(evt event.UpdateEvent,
 			addNodePoolToWorkQueue(oldNp, q)
 			return
 		}
-
+		// 如果oldNp为空, 表示加入节点池
 		if oldNp == "" {
 			// add node to the new Pool
 			klog.V(5).Infof("will enqueue new pool(%s) for node(%s)",
@@ -98,6 +102,7 @@ func (e *EnqueueNodePoolForNode) Update(evt event.UpdateEvent,
 		return
 	}
 
+	// 只要node的labels, annotation, taints变化就会加入到处理队列
 	if !reflect.DeepEqual(newNode.Labels, oldNode.Labels) ||
 		!reflect.DeepEqual(newNode.Annotations, oldNode.Annotations) ||
 		!reflect.DeepEqual(newNode.Spec.Taints, oldNode.Spec.Taints) {

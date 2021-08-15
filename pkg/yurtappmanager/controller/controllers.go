@@ -34,6 +34,7 @@ func init() {
 	controllerAddFuncs = append(controllerAddFuncs, uniteddeployment.Add, nodepool.Add)
 }
 
+//将多个CRD的 Reconcile 统一管理起来, 并使用SetupWithManager统一添加到manager中, 这样当 manager 启动时包含的Reconcile就会被启动
 func SetupWithManager(m manager.Manager, ctx context.Context) error {
 	for _, f := range controllerAddFuncs {
 		if err := f(m, ctx); err != nil {

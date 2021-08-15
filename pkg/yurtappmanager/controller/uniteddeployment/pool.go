@@ -50,6 +50,7 @@ type ResourceRef struct {
 }
 
 // ControlInterface defines the interface that UnitedDeployment uses to list, create, update, and delete Pools.
+// 定义了操作Pool的接口
 type ControlInterface interface {
 	// GetAllPools returns the pools which are managed by the UnitedDeployment.
 	GetAllPools(ud *unitv1alpha1.UnitedDeployment) ([]*Pool, error)

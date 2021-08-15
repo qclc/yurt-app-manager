@@ -47,6 +47,7 @@ type RefManager struct {
 
 // New returns a RefManager that exposes
 // methods to manage the controllerRef of pods.
+// New返回一个RefManager，该RefManager暴露了管理pods的controllerRef的方法。
 func New(client client.Client, selector *metav1.LabelSelector, owner metav1.Object, schema *runtime.Scheme) (*RefManager, error) {
 	s, err := metav1.LabelSelectorAsSelector(selector)
 	if err != nil {
@@ -67,6 +68,7 @@ func New(client client.Client, selector *metav1.LabelSelector, owner metav1.Obje
 }
 
 // ClaimOwnedObjects tries to take ownership of a list of objects for this controller.
+// 尝试判断并获取符合filters条件以及对象owner和RefManager一致的对象列表
 func (mgr *RefManager) ClaimOwnedObjects(objs []metav1.Object, filters ...func(metav1.Object) bool) ([]metav1.Object, error) {
 	match := func(obj metav1.Object) bool {
 		if !mgr.selector.Matches(labels.Set(obj.GetLabels())) {
@@ -83,6 +85,8 @@ func (mgr *RefManager) ClaimOwnedObjects(objs []metav1.Object, filters ...func(m
 	claimObjs := []metav1.Object{}
 	errlist := []error{}
 	for _, obj := range objs {
+		// obj类型是Deployment或StatefulSet
+		// 判断对象的是否符合match条件, 以及该对象的owner是否和RefManager中设置的UnitedDeployment一致, 即看该对象是否属于该UnitedDeployment
 		ok, err := mgr.claimObject(obj, match)
 		if err != nil {
 			errlist = append(errlist, err)
@@ -209,9 +213,13 @@ func (mgr *RefManager) release(obj metav1.Object) error {
 	return nil
 }
 
+//判断对象的是否符合match条件, 以及owner是否和RefManager一致
 func (mgr *RefManager) claimObject(obj metav1.Object, match func(metav1.Object) bool) (bool, error) {
+	//实际就是获取指向对象管理者副本的指针, 类型为k8s的OwnerReference, 就是对象的metadata.ownerReferences
+	//例如pod的管理者就是ReplicaSet, k8s引入这个是为了方便进行垃圾回收,级联删除
 	controllerRef := metav1.GetControllerOf(obj)
 	if controllerRef != nil {
+		//判断拥有者是否匹配
 		if controllerRef.UID != mgr.owner.GetUID() {
 			// Owned by someone else. Ignore.
 			return false, nil

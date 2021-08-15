@@ -47,6 +47,9 @@ var (
 	scheme   = runtime.NewScheme()
 	setupLog = ctrl.Log.WithName("setup")
 
+	//使用的令牌桶进行请求限流, 此处是设置controller处理请求的流量
+	//Burst是桶里令牌数量初始值和上线, QPS相当于每秒往桶里发送的令牌数, 桶里超过Burst的令牌会被丢弃
+	//每个请求需要一个令牌进行处理, 没有得到令牌的会阻塞直到令牌分配下来
 	restConfigQPS   = flag.Int("rest-config-qps", 30, "QPS of rest config.")
 	restConfigBurst = flag.Int("rest-config-burst", 50, "Burst of rest config.")
 )
@@ -102,18 +105,21 @@ func Run(opts *options.YurtAppOptions) {
 	//ctrl.SetLogger(zap.New(zap.UseDevMode(true)))
 	ctrl.SetLogger(klogr.New())
 
+	//通过kube-apiserver获取config
 	cfg := ctrl.GetConfigOrDie()
 	setRestConfig(cfg)
 
+	//获取用于创建controller的manager
+	//Manager 管理多个Controller 的运行，并提供 数据读（cache）写（client）等crudw基础能力
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
-		Scheme:                  scheme,
-		MetricsBindAddress:      opts.MetricsAddr,
-		HealthProbeBindAddress:  opts.HealthProbeAddr,
-		LeaderElection:          opts.EnableLeaderElection,
-		LeaderElectionID:        "yurt-app-manager",
-		LeaderElectionNamespace: opts.LeaderElectionNamespace,
+		Scheme:                     scheme,
+		MetricsBindAddress:         opts.MetricsAddr,
+		HealthProbeBindAddress:     opts.HealthProbeAddr,
+		LeaderElection:             opts.EnableLeaderElection,
+		LeaderElectionID:           "yurt-app-manager",
+		LeaderElectionNamespace:    opts.LeaderElectionNamespace,
 		LeaderElectionResourceLock: resourcelock.LeasesResourceLock, // use lease to election
-		Namespace:               opts.Namespace,
+		Namespace:                  opts.Namespace,
 	})
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")
@@ -135,12 +141,15 @@ func Run(opts *options.YurtAppOptions) {
 
 	setupLog.Info("setup controllers")
 
+	//根据manager创建controller
 	ctx := genOptCtx(opts.CreateDefaultPool)
+	//将各个CRD的Reconciler传入controller进行, 用于单个资源的调谐作用
 	if err = controller.SetupWithManager(mgr, ctx); err != nil {
 		setupLog.Error(err, "unable to setup controllers")
 		os.Exit(1)
 	}
 
+	//将webhook传入manager中, webhook用于准入验证的
 	setupLog.Info("setup webhook")
 	if err = webhook.SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to setup webhook")
@@ -161,6 +170,7 @@ func Run(opts *options.YurtAppOptions) {
 		os.Exit(1)
 	}
 
+	// 启动manager,即启动所有注册的Controller
 	setupLog.Info("starting manager")
 	if err := mgr.Start(stopCh); err != nil {
 		setupLog.Error(err, "problem running manager")

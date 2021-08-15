@@ -40,25 +40,32 @@ type UnitedDeploymentConditionType string
 
 const (
 	// PoolProvisioned means all the expected pools are provisioned and unexpected pools are deleted.
+	// PoolProvisioned 意味着预配所有预期的池并删除意外的池
 	PoolProvisioned UnitedDeploymentConditionType = "PoolProvisioned"
 	// PoolUpdated means all the pools are updated.
+	// PoolUpdated代表所有的pools都已经更新
 	PoolUpdated UnitedDeploymentConditionType = "PoolUpdated"
 	// PoolFailure is added to a UnitedDeployment when one of its pools has failure during its own reconciling.
+	// 当其中一个pool在调谐过程中出现错误时, 会将PoolFailure状态放到ud中
 	PoolFailure UnitedDeploymentConditionType = "PoolFailure"
 )
 
 // UnitedDeploymentSpec defines the desired state of UnitedDeployment.
+// UnitedDeploymentSpec 定义UnitedDeployment的期望状态
 type UnitedDeploymentSpec struct {
 	// Selector is a label query over pods that should match the replica count.
 	// It must match the pod template's labels.
+	// 选择器, 选择pod, 符合条件的pod数量应该符合replica数目
 	Selector *metav1.LabelSelector `json:"selector"`
 
 	// WorkloadTemplate describes the pool that will be created.
 	// +optional
+	// 表示要被创建的workload类型, DeploymentTemplate 或 StatefulSetTemplate
 	WorkloadTemplate WorkloadTemplate `json:"workloadTemplate,omitempty"`
 
 	// Topology describes the pods distribution detail between each of pools.
 	// +optional
+	// 描述pod在每个pools中的分布情况
 	Topology Topology `json:"topology,omitempty"`
 
 	// Indicates the number of histories to be conserved.
@@ -95,11 +102,14 @@ type DeploymentTemplateSpec struct {
 
 // Topology defines the spread detail of each pool under UnitedDeployment.
 // A UnitedDeployment manages multiple homogeneous workloads which are called pool.
+// 一个 UnitedDeployment 管理多个同构工作负载, 称为pool
 // Each of pools under the UnitedDeployment is described in Topology.
+// UnitedDeployment 中的每个pool都包含了详细信息, 放在Topology
 type Topology struct {
 	// Contains the details of each pool. Each element in this array represents one pool
 	// which will be provisioned and managed by UnitedDeployment.
 	// +optional
+	// 包含每个Pool的详细信息
 	Pools []Pool `json:"pools,omitempty"`
 }
 
@@ -109,20 +119,26 @@ type Pool struct {
 	// pool workload name prefix in the format '<deployment-name>-<pool-name>-'.
 	// Name should be unique between all of the pools under one UnitedDeployment.
 	// Name is NodePool Name
+	// 遵循DNS命名格式, Pool Name 应该在同一个 UnitedDeployment 中保持唯一
 	Name string `json:"name"`
 
 	// Indicates the node selector to form the pool. Depending on the node selector,
 	// pods provisioned could be distributed across multiple groups of nodes.
 	// A pool's nodeSelectorTerm is not allowed to be updated.
 	// +optional
+	// 即这个pool中创建的pod可以被调度到哪些节点上
+	// 该字段不允许进行更新
 	NodeSelectorTerm corev1.NodeSelectorTerm `json:"nodeSelectorTerm,omitempty"`
 
 	// Indicates the tolerations the pods under this pool have.
 	// A pool's tolerations is not allowed to be updated.
 	// +optional
+	// 表示该pool中的pods 可以忍受哪些taints
+	// 该字段不允许进行更新
 	Tolerations []corev1.Toleration `json:"tolerations,omitempty"`
 
 	// Indicates the number of the pod to be created under this pool.
+	// 表示该pool中应该存在的pod数量
 	// +required
 	Replicas *int32 `json:"replicas,omitempty"`
 
@@ -131,6 +147,8 @@ type Pool struct {
 	// Patch takes precedence over Replicas fields
 	// If the Patch also modifies the Replicas, use the Replicas value in the Patch
 	// +optional
+	// 表示针对模板Spec的更新部分
+	// Patch字段优先于Replicas字段。如果Patch也修改了Replicas，请使用Patch中的Replicas值
 	Patch *runtime.RawExtension `json:"patch,omitempty"`
 }
 
@@ -172,18 +190,23 @@ type UnitedDeploymentStatus struct {
 // UnitedDeploymentCondition describes current state of a UnitedDeployment.
 type UnitedDeploymentCondition struct {
 	// Type of in place set condition.
+	// condition的种类
 	Type UnitedDeploymentConditionType `json:"type,omitempty"`
 
 	// Status of the condition, one of True, False, Unknown.
+	// condition的状态, True, False, Unknown.
 	Status corev1.ConditionStatus `json:"status,omitempty"`
 
 	// Last time the condition transitioned from one status to another.
+	// 上次condition转变的时间
 	LastTransitionTime metav1.Time `json:"lastTransitionTime,omitempty"`
 
 	// The reason for the condition's last transition.
+	// condition最新一次转变的原因
 	Reason string `json:"reason,omitempty"`
 
 	// A human readable message indicating details about the transition.
+	// 一条人类可读的消息，指示有关转换的详细信息。
 	Message string `json:"message,omitempty"`
 }
 

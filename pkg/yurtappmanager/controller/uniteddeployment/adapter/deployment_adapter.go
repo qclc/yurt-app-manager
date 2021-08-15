@@ -74,10 +74,13 @@ func (a *DeploymentAdapter) GetPoolFailure() *string {
 }
 
 // ApplyPoolTemplate updates the pool to the latest revision, depending on the DeploymentTemplate.
+// 将传入的obj更新为ud中的对应的pool设置, 同时如果ud中有相关的patch更新, 也会更新到obj中
 func (a *DeploymentAdapter) ApplyPoolTemplate(ud *alpha1.UnitedDeployment, poolName, revision string,
 	replicas int32, obj runtime.Object) error {
+	// set是传入的obj
 	set := obj.(*appsv1.Deployment)
 
+	// 从ud中找到名字为poolName的pool存入poolConfig
 	var poolConfig *alpha1.Pool
 	for i, pool := range ud.Spec.Topology.Pools {
 		if pool.Name == poolName {
@@ -89,6 +92,7 @@ func (a *DeploymentAdapter) ApplyPoolTemplate(ud *alpha1.UnitedDeployment, poolN
 		return fmt.Errorf("fail to find pool config %s", poolName)
 	}
 
+	// 设置传入obj中的label, Namespace, Annotations与 ud 保持一致
 	set.Namespace = ud.Namespace
 
 	if set.Labels == nil {
@@ -138,18 +142,21 @@ func (a *DeploymentAdapter) ApplyPoolTemplate(ud *alpha1.UnitedDeployment, poolN
 
 	attachNodeAffinityAndTolerations(&set.Spec.Template.Spec, poolConfig)
 
+	// 判断ud中保存的对应pool是否存在patch
 	if !PoolHasPatch(poolConfig, set) {
 		klog.Infof("Deployment[%s/%s-] has no patches, do not need strategicmerge", set.Namespace,
 			set.GenerateName)
 		return nil
 	}
 
+	// 根据patch创建一个新的Deployment
 	patched := &appsv1.Deployment{}
 	if err := CreateNewPatchedObject(poolConfig.Patch, set, patched); err != nil {
 		klog.Errorf("Deployment[%s/%s-] strategic merge by patch %s error %v", set.Namespace,
 			set.GenerateName, string(poolConfig.Patch.Raw), err)
 		return err
 	}
+	// 将patched写入传入的obj中
 	patched.DeepCopyInto(set)
 
 	klog.Infof("Deployment [%s/%s-] has patches configure successfully:%v", set.Namespace,
@@ -158,6 +165,7 @@ func (a *DeploymentAdapter) ApplyPoolTemplate(ud *alpha1.UnitedDeployment, poolN
 }
 
 // PostUpdate does some works after pool updated. Deployment will implement this method to clean stuck pods.
+// PostUpdate 用于在池pool更新后做一些额外工作。Deployment将应用此方法来清理卡住的 pod。
 func (a *DeploymentAdapter) PostUpdate(ud *alpha1.UnitedDeployment, obj runtime.Object, revision string) error {
 	// Do nothing,
 	return nil

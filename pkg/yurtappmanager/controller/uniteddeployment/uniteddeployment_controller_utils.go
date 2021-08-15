@@ -37,6 +37,7 @@ type UnitedDeploymentPatches struct {
 	Patch    string
 }
 
+// 获取对象中有关pool-name的标签值
 func getPoolNameFrom(metaObj metav1.Object) (string, error) {
 	name, exist := metaObj.GetLabels()[unitv1alpha1.PoolNameLabelKey]
 	if !exist {
@@ -74,6 +75,7 @@ func GetUnitedDeploymentCondition(status unitv1alpha1.UnitedDeploymentStatus, co
 
 // SetUnitedDeploymentCondition updates the UnitedDeployment to include the provided condition. If the condition that
 // we are about to add already exists and has the same status, reason and message then we are not going to update.
+// SetUnitedDeploymentCondition 更新UnitedDeployment使得其包含传入的condition。如果我们要添加的condition已经存在，并且具有相同的status, reason 和 message，那么我们将不进行更新。
 func SetUnitedDeploymentCondition(status *unitv1alpha1.UnitedDeploymentStatus, condition *unitv1alpha1.UnitedDeploymentCondition) {
 	currentCond := GetUnitedDeploymentCondition(*status, condition.Type)
 	if currentCond != nil && currentCond.Status == condition.Status && currentCond.Reason == condition.Reason {
@@ -103,6 +105,7 @@ func filterOutCondition(conditions []unitv1alpha1.UnitedDeploymentCondition, con
 	return newConditions
 }
 
+// 获取一个ud中每个pool对应的更新配置,即UnitedDeploymentPatches{}, 返回[name]UnitedDeploymentPatches{}
 func GetNextPatches(ud *unitv1alpha1.UnitedDeployment) map[string]UnitedDeploymentPatches {
 	next := make(map[string]UnitedDeploymentPatches)
 	for _, pool := range ud.Spec.Topology.Pools {

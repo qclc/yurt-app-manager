@@ -35,6 +35,10 @@ import (
 // after waiting for the current batch to complete.
 //
 // It returns the number of successful calls to the function.
+// SlowStartBatch尝试调用所提供的函数的总数为“count”次，开始缓慢地检查错误，然后在调用成功时加速。
+// 它将调用分组为批，从一组initialBatchSize开始。在每个批处理中，它可以使用其索引并发地多次调用函数。
+// 如果整批成功，下一批可能会成倍地变大。如果某个批处理中存在失败，则在等待当前批处理完成后跳过所有剩余的批处理。
+// 它返回成功调用函数的次数。
 func SlowStartBatch(count int, initialBatchSize int, fn func(index int) error) (int, error) {
 	remaining := count
 	successes := 0
